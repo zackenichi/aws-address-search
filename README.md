@@ -1,38 +1,242 @@
-# Mantine Next.js template
+# Next.js with AWS Location Services
 
-This is a template for [Next.js](https://nextjs.org/) pages router + [Mantine](https://mantine.dev/).
-If you want to use app router instead, see [next-app-template](https://github.com/mantinedev/next-app-template).
+This project demonstrates how to use AWS Location Services for place autocomplete and fetching place details in a Next.js application.
 
-## Features
+## Prerequisites
 
-This template comes with the following features:
+- Node.js and npm installed
+- AWS account
+- AWS CLI configured
 
-- [PostCSS](https://postcss.org/) with [mantine-postcss-preset](https://mantine.dev/styles/postcss-preset)
-- [TypeScript](https://www.typescriptlang.org/)
-- [Storybook](https://storybook.js.org/)
-- [Jest](https://jestjs.io/) setup with [React Testing Library](https://testing-library.com/docs/react-testing-library/intro)
-- ESLint setup with [eslint-config-mantine](https://github.com/mantinedev/eslint-config-mantine)
+## Setup Instructions
 
-## npm scripts
+1. **Create a Next.js Project**
 
-### Build and dev scripts
+   ```sh
+   npx create-next-app@latest my-nextjs-app
+   cd my-nextjs-app
+   ```
 
-- `dev` – start dev server
-- `build` – bundle application for production
-- `export` – exports static website to `out` folder
-- `analyze` – analyzes application bundle with [@next/bundle-analyzer](https://www.npmjs.com/package/@next/bundle-analyzer)
+2. **Install Dependencies**
 
-### Testing scripts
+   ```sh
+   npm install @mantine/core
+   ```
 
-- `typecheck` – checks TypeScript types
-- `lint` – runs ESLint
-- `prettier:check` – checks files with Prettier
-- `jest` – runs jest tests
-- `jest:watch` – starts jest watch
-- `test` – runs `jest`, `prettier:check`, `lint` and `typecheck` scripts
+3. **Set Up AWS Location Services**
 
-### Other scripts
+- Go to the AWS Management Console.
+- Navigate to AWS Location Service.
+- Create a new Place Index.
+- Note down the Place Index name and the region.
+- Configure Environment Variables
 
-- `storybook` – starts storybook dev server
-- `storybook:build` – build production storybook bundle to `storybook-static`
-- `prettier:write` – formats all files with Prettier
+4. **Create a .env.local file in the root of your project and add your AWS API key:**
+
+   ```sh
+   NEXT_PUBLIC_API_KEY=your_aws_api_key
+   ```
+
+5. **Create API Routes**
+
+Create two API routes for fetching suggestions and place details.
+
+- pages/api/fetchSuggestions.ts
+
+```ts
+import type { NextApiRequest, NextApiResponse } from 'next';
+
+interface PlaceResult {
+  Text: string;
+  PlaceId: string;
+}
+
+interface SearchResponse {
+  Summary: {
+    Text: string;
+    MaxResults: number;
+    DataSource: string;
+  };
+  Results: PlaceResult[];
+}
+
+const handler = async (req: NextApiRequest, res: NextApiResponse) => {
+  const { text } = req.body;
+  const placesName = 'your_place_index_name';
+  const region = 'your_region';
+  const apiKey = process.env.NEXT_PUBLIC_API_KEY;
+
+  const url = `https://places.geo.${region}.amazonaws.com/places/v0/indexes/${placesName}/search/suggestions?key=${apiKey}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        Text: text,
+        MaxResults: 10,
+      }),
+    });
+
+    if (response.ok) {
+      const data: SearchResponse = await response.json();
+      res.status(200).json(data);
+    } else {
+      res.status(response.status).json({ error: 'Failed to fetch suggestions' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+export default handler;
+```
+
+- pages/api/fetchPlaceDetails.ts
+
+```ts
+import type { NextApiRequest, NextApiResponse } from 'next';
+
+interface PlaceDetailsResponse {
+  Place: {
+    Label: string; // Full address label
+    Street: string; // Street address
+    Municipality: string; // City
+    SubRegion: string; // State
+    PostalCode: string; // Postal Code
+    Country: string; // Country
+  };
+}
+
+const handler = async (req: NextApiRequest, res: NextApiResponse) => {
+  const { placeId } = req.body;
+  const placesName = 'your_place_index_name';
+  const region = 'your_region';
+  const apiKey = process.env.NEXT_PUBLIC_API_KEY;
+
+  if (!placeId) {
+    return res.status(400).json({ error: 'Place ID is required' });
+  }
+
+  const url = `https://places.geo.${region}.amazonaws.com/places/v0/indexes/${placesName}/places/${placeId}?key=${apiKey}&language=en`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (response.ok) {
+      const data: PlaceDetailsResponse = await response.json();
+      res.status(200).json(data);
+    } else {
+      res.status(response.status).json({ error: 'Failed to fetch place details' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+export default handler;
+```
+
+6. **Update Your Component**
+
+Update your AddressSearch.tsx component to use the new API routes:
+
+```ts
+import { useState } from 'react';
+import { Autocomplete } from '@mantine/core';
+
+interface PlaceResult {
+  Text: string;
+  PlaceId: string;
+}
+
+interface SearchResponse {
+  Summary: {
+    Text: string;
+    MaxResults: number;
+    DataSource: string;
+  };
+  Results: PlaceResult[];
+}
+
+interface PlaceDetailsResponse {
+  Place: {
+    Label: string; // Full address label
+    Street: string; // Street address
+    Municipality: string; // City
+    SubRegion: string; // State
+    PostalCode: string; // Postal Code
+    Country: string; // Country
+  };
+}
+
+export const AddressAutocomplete: React.FC = () => {
+  const [query, setQuery] = useState<string>('');
+  const [suggestions, setSuggestions] = useState<PlaceResult[]>([]);
+
+  const fetchSuggestions = async (text: string) => {
+    try {
+      const response = await fetch('/api/fetchSuggestions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
+      });
+
+      if (response.ok) {
+        const data: SearchResponse = await response.json();
+        setSuggestions(data.Results);
+      } else {
+        console.error('Failed to fetch suggestions');
+      }
+    } catch (error) {
+      console.error('Error fetching suggestions:', error);
+    }
+  };
+
+  const fetchPlaceDetails = async (placeId: string) => {
+    try {
+      const response = await fetch('/api/fetchPlaceDetails', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ placeId }),
+      });
+
+      if (response.ok) {
+        const data: PlaceDetailsResponse = await response.json();
+        console.log(data);
+      } else {
+        console.error('Failed to fetch place details');
+      }
+    } catch (error) {
+      console.error('Error fetching place details:', error);
+    }
+  };
+
+  // Rest of your component logic
+};
+```
+
+7. **Run Your Project**
+
+Start your Next.js development server:
+
+```sh
+npm run dev
+```
+
+Open your browser and navigate to http://localhost:3000 to see your application in action.
+
+## Conclusion
+
+This setup allows you to use AWS Location Services for place autocomplete and fetching place details securely in a Next.js application. By moving the API key to the server side, you ensure that it is not exposed to the client, enhancing the security of your application.
